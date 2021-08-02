@@ -10,15 +10,6 @@ geometry_types = ['Polygon', 'Point', 'LineString']
 datasets = ["LANDSAT/LC08/C01/T1"]
 
 
-def main():
-    ee.Initialize()
-    kmz_file_paths = glob.glob("kmz\*")
-    print(kmz_file_paths)
-    geojson_file_paths = kmz_to_geojson(kmz_file_paths)
-    ee_objects = geojson_to_earth_engine(geojson_file_paths)
-
-#print(geometry_types)
-
 def kmz_to_geojson(kmz_file_paths):
     '''
     Takes in the kmz file paths, unzips them to kml files, 
@@ -30,7 +21,6 @@ def kmz_to_geojson(kmz_file_paths):
         kmz = ZipFile(path, "r")
         # takes the last part of path without the .kmz. Replaced spaces with unscores if necessary
         filename = path.split("\\")[-1][:-4].replace(" ", "_")   
-        print(filename)
         new_file_path = ""
         for i, name in enumerate(kmz.namelist()):
             if i > 0:
@@ -39,9 +29,9 @@ def kmz_to_geojson(kmz_file_paths):
                 new_file_path = os.path.join("kml", filename + ".kml")
             with open(new_file_path, 'wb') as kml_file:
                 kml_file.write(kmz.open(name, 'r').read())
-            print(name)
             kml2geojson.main.convert(new_file_path, 'geojson')
             geojson_path = f"geojson\\{filename}.geojson"
+            print("Generated " + geojson_path)
             geojson_paths.append(geojson_path)
     return geojson_paths
 
@@ -55,13 +45,12 @@ def geojson_to_earth_engine(geojson_file_paths):
     ee_objects = []
     for geojson_path in geojson_file_paths:
         with open(geojson_path, 'r') as json_file:
-            geojson_dict = json.loads(json_file.read())            
+            geojson_dict = json.loads(json_file.read())
             feature_type, feature_obj = geojson_feature_parser(geojson_dict)
             ee_objects.append(feature_obj)
-    print(len(ee_objects))
     return ee_objects
 
-             
+
 def geojson_feature_parser(gj):
     '''
     Takes in full initial geojson and parses it into earth engine types:
@@ -84,76 +73,64 @@ def geojson_feature_parser(gj):
         return "FeatureCollection", ee.FeatureCollection(feature_list)
     elif gj["type"] == "Feature":
         # Need to turn into Feature object
-        geometry_type, geometry_obj = geojson_geometry_parser(gj["geometry"])
+        geometry_type, geometry = geojson_geometry_parser(gj["geometry"])
+        properties = gj["properties"]
+        return "Feature", ee.Feature(geometry, properties) 
         # type not used now, but might be useful
-        return "Feature", geometry_obj
     else:
         raise Exception("geojson_feature_parser: unhandled type: " + gj["type"])
 
 
 def geojson_geometry_parser(geometry):
     ''' 
-    Parses the geometry types from geojson into google earth objects
-    works for types: ['Polygon', 'Point', 'LineString']
-
-    issue: coordinates might need to be in xy not xyz
+    Turns GeoJSON geometry into an ee.Geometry() object.
+    Our kmz files inlcude elevation data for each coordinate, which GEE does
+    not seem to support. Consequently, we must remove this data before
+    creating the geometry object.
     '''
-    if not geometry["type"]:
-        raise Exception("Not a geometry type")
-    if geometry["type"] == "Polygon":
-        if len(geometry["coordinates"]) != 1:
-            raise Exception("Zero polygons or more than one in polygon type")
-        coordinates = geometry["coordinates"][0]
-        new_coordinates = remove_altitude(coordinates)
-        polygon = ee.Geometry.Polygon(new_coordinates)
-        return "Polygon", polygon
-        # write_to_file("geometry.txt", str(geometry["coordinates"]))
-        # ee.Geometry.Polygon(coords, proj, geodesic, maxError, evenOdd)
-        # geometry[coordinates] is a list of polygon coordinate lists, usually just one
-        # geometry[coordinates][0] is a  list of many coordinates for the polygon
-    elif geometry["type"] == "Point":
-        coordinates = geometry["coordinates"]
-        if len(coordinates) == 3:
-            new_coordinates = [coordinates[0], coordinates[1]]
-        else:
-            raise Exception()("Point coordinates not in 3d: " + str(coordinates))
-        point = ee.Geometry.Point(new_coordinates)
-        return "Point", point
-        # ee.Geometry.Point(coords, proj)
-        # coords	List	A list of two [x,y] coordinates in the given projection.
-        # geometry[coordinates] is a set of xyz coordinates
-    elif geometry["type"] == "LineString":
-        # ee.Geometry.LineString(coords, proj, geodesic, maxError)
-        # geometry["coordinates"] is a list of line coordinate sets
-        # geometry["coordinates"][0] is a set of xyz coordinates
-        coordinates = geometry["coordinates"]
-        new_coordinates = remove_altitude(coordinates)
-        line_string = ee.Geometry.LineString(new_coordinates)
-        return "LineString", line_string
-    else:
-        raise Exception(f"geojson_geometry_parser: unhandled geometry type: " + str(geometry["type"]))
-    
-    return(geometry["type"])
+    geometry["coordinates"] = remove_altitude(geometry["coordinates"])
+    # some of the LineStrings only have one point, GEE will throw an error at this
+    if geometry["type"] == "LineString" and len(geometry["coordinates"]) < 2:
+        geometry["type"] = "Point"
+        geometry["coordinates"] = geometry["coordinates"][0]
+    return geometry["type"], ee.Geometry(geometry)
 
 
 def remove_altitude(coordinates):
     '''
-    Takes in a list of 3d coordinates and returns a list of 2d coordinates
-    (Could just replace with list comprehension)
+    Given either a coordinate or a list of coordinates, recursively strip the
+    elevation data from each coordinate.
+    GeoJSON spec defines a coordinate as a list containing [long, lat, elevation (optional)].
+    GEE does not seem to support elevation data, so we must strip it before creating
+    GEE objects.
     '''
-    new_coords = []
-    for xyz in coordinates:
-        if len(xyz) == 3:
-            new_coords.append([xyz[0], xyz[1]])
+    stripped_coords = []
+    # first, check if we are dealing with a coordinate or list of coordinates
+    if type(coordinates[0]) is list:
+        for coord in coordinates:
+            stripped_coords.append(remove_altitude(coord))
+    else:
+        # if there is an elevation value, remove it
+        if len(coordinates) == 3:
+            stripped_coords = coordinates[0:2]
         else:
-            raise Exception("Not all coordinates are three dimensional")
-    return new_coords
+            stripped_coords = coordinates
+    return stripped_coords
 
 
-def write_to_file(filename, text):
-    with open(filename, "w") as f:
-        f.write(text)
-
-
+def main():
+    ee.Initialize()
+    kmz_file_paths = glob.glob("kmz\*")
+    # TODO: only need to generate geojson files once, maybe split into separate script
+    print("Converting kmz files to geoJSON files...")
+    geojson_file_paths = kmz_to_geojson(kmz_file_paths)
+    print("Generating GEE objects...")
+    geojson_file_paths = [os.path.join("geojson", "Tracks_Productores_San_Pablo_de_borbur-Colombia.geojson")]
+    ee_objects = geojson_to_earth_engine(geojson_file_paths)
+    # for obj in ee_objects:
+    #     print(obj.getInfo())
+    # TODO: upload objects to GEE? download imagery using them?
+    
+    
 if __name__ == "__main__":
     main()
