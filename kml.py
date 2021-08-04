@@ -19,11 +19,7 @@ def kmz_to_geojson(kmz_file_paths):
     for path in kmz_file_paths:
         kmz = ZipFile(path, "r")
         # takes the last part of path without the .kmz. Replaced spaces with unscores if necessary
-        filename = ""
-        if len(path.split("/")) == 1:
-            filename = path.split("\\")[-1][:-4].replace(" ", "_")
-        else:
-            filename = path.split("/")[-1][:-4].replace(" ", "_")   
+        filename = os.path.split(path)[-1][:-4].replace(" ", "_")   
         new_file_path = ""
         for i, name in enumerate(kmz.namelist()):
             if i > 0:
@@ -128,15 +124,15 @@ def export_ee_assets(ee_obj, name):
     code editor.
     NOTE: change {username} to your Google username.
     '''
-    name = os.path.splitext(name)[0].split("/")[-1] # remove extension and folder
-    task = ee.batch.Export.table.toAsset(collection=ee_obj, description=name, assetId=("users/{username}/" + name))
+    name = os.path.split(os.path.splitext(name)[0])[-1] # remove extension and folder
+    task = ee.batch.Export.table.toAsset(collection=ee_obj, description=name, assetId=(f"users/{username}/" + name))
     task.start()
     print("Uploading " + name + " to GEE...")
 
 
 def main():
     ee.Initialize()
-    kmz_file_paths = glob.glob("kmz/*")
+    kmz_file_paths = glob.glob(f"kmz{os.path.sep}*")
     print(kmz_file_paths)
     # TODO: only need to generate geojson files once, maybe split into separate script
     print("Converting kmz files to geoJSON files...")
