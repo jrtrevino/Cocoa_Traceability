@@ -5,7 +5,6 @@ import kml2geojson
 import ee
 import json
 
-geometry_types = ['Polygon', 'Point', 'LineString']
 
 datasets = ["LANDSAT/LC08/C01/T1"]
 
@@ -20,7 +19,7 @@ def kmz_to_geojson(kmz_file_paths):
     for path in kmz_file_paths:
         kmz = ZipFile(path, "r")
         # takes the last part of path without the .kmz. Replaced spaces with unscores if necessary
-        filename = path.split("\\")[-1][:-4].replace(" ", "_")   
+        filename = path.split("/")[-1][:-4].replace(" ", "_")   
         new_file_path = ""
         for i, name in enumerate(kmz.namelist()):
             if i > 0:
@@ -30,7 +29,7 @@ def kmz_to_geojson(kmz_file_paths):
             with open(new_file_path, 'wb') as kml_file:
                 kml_file.write(kmz.open(name, 'r').read())
             kml2geojson.main.convert(new_file_path, 'geojson')
-            geojson_path = f"geojson\\{filename}.geojson"
+            geojson_path = os.path.join("geojson", f"{filename}.geojson")
             print("Generated " + geojson_path)
             geojson_paths.append(geojson_path)
     return geojson_paths
@@ -118,18 +117,24 @@ def remove_altitude(coordinates):
     return stripped_coords
 
 
+def export_ee_assets(ee_obj, name):
+    name = os.path.splitext(name)[0].split("/")[-1] # remove extension and folder
+    task = ee.batch.Export.table.toAsset(collection=ee_obj, description=name, assetId=("users/remywolf/" + name))
+    task.start()
+    print("Uploading " + name + " to GEE...")
+
+
 def main():
     ee.Initialize()
-    kmz_file_paths = glob.glob("kmz\*")
+    kmz_file_paths = glob.glob("kmz/*")
+    print(kmz_file_paths)
     # TODO: only need to generate geojson files once, maybe split into separate script
     print("Converting kmz files to geoJSON files...")
     geojson_file_paths = kmz_to_geojson(kmz_file_paths)
     print("Generating GEE objects...")
-    geojson_file_paths = [os.path.join("geojson", "Tracks_Productores_San_Pablo_de_borbur-Colombia.geojson")]
     ee_objects = geojson_to_earth_engine(geojson_file_paths)
-    # for obj in ee_objects:
-    #     print(obj.getInfo())
-    # TODO: upload objects to GEE? download imagery using them?
+    for obj, name in zip(ee_objects, geojson_file_paths):
+        export_ee_assets(obj, name)
     
     
 if __name__ == "__main__":
