@@ -117,9 +117,15 @@ def remove_altitude(coordinates):
     return stripped_coords
 
 
+
 def export_ee_assets(ee_obj, name):
+    '''
+    Given a GEE object in memory and a name, uploads it to GEE so you can access it in the
+    code editor.
+    NOTE: change {username} to your Google username.
+    '''
     name = os.path.splitext(name)[0].split("/")[-1] # remove extension and folder
-    task = ee.batch.Export.table.toAsset(collection=ee_obj, description=name, assetId=("users/remywolf/" + name))
+    task = ee.batch.Export.table.toAsset(collection=ee_obj, description=name, assetId=("users/{username}/" + name))
     task.start()
     print("Uploading " + name + " to GEE...")
 
