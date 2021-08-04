@@ -7,7 +7,7 @@ import json
 
 
 datasets = ["LANDSAT/LC08/C01/T1"]
-
+username = "bmiche01"
 
 def kmz_to_geojson(kmz_file_paths):
     '''
@@ -19,7 +19,11 @@ def kmz_to_geojson(kmz_file_paths):
     for path in kmz_file_paths:
         kmz = ZipFile(path, "r")
         # takes the last part of path without the .kmz. Replaced spaces with unscores if necessary
-        filename = path.split("/")[-1][:-4].replace(" ", "_")   
+        filename = ""
+        if len(path.split("/")) == 1:
+            filename = path.split("\\")[-1][:-4].replace(" ", "_")
+        else:
+            filename = path.split("/")[-1][:-4].replace(" ", "_")   
         new_file_path = ""
         for i, name in enumerate(kmz.namelist()):
             if i > 0:
