@@ -1,3 +1,4 @@
 .vscode
 vis/
 misc/
+__pycache__/
