@@ -1,0 +1,249 @@
+import json
+import time
+import os
+from datetime import datetime
+
+from util import get_credentials, send_request, threaded_download, threads, extract, get_matching_files, build_vrt
+
+# TODO: remove hardcoded parameters
+json_bounds_file = "../polygons/geojson/boundary.geojson"
+
+# --------------------------------------------------------------------------- #
+# Code adapted from UGSS M2M API sample script
+# https://m2m.cr.usgs.gov/api/docs/example/download_landsat_c2-py
+# --------------------------------------------------------------------------- #
+
+
+""" Log in to the API and return the API key to use with future requests. """
+def authenticate(url, username=None, password=None, verbose=True):
+    # Register for USGS EROS credentials here: https://ers.cr.usgs.gov/register
+    if not username or not password:
+        username, password = get_credentials("USGS Eros Username: ")
+    payload = {'username': username, 'password': password}
+    if verbose: print("Logging in...")
+    api_key = send_request(url + "login", payload, verbose=verbose)
+    return api_key
+
+
+""" Search for images matching a certain criteria, and return a list of products that
+    can be downloaded. date_range and cloud_range should be tuples, and boundary should
+    point to a GeoJSON file. Reserving **kwargs to be used in the future if needed. """
+def search(url, api_key, verbose=True, dataset=None, max_results = 10, date_range=None, cloud_range=None, boundary=None, **kwargs):
+    if verbose: print("Fetching scenes...")
+    
+    # search for scenes that match our criteria
+    acquisition_filter = cloud_cover_filter = ingest_filter = metadata_filter = seasonal_filter = spatial_filter = None
+    
+    if date_range:
+        acquisition_filter = {
+            'start': date_range[0],
+            'end': date_range[1]
+        }
+        
+    if cloud_range:
+        cloud_cover_filter = {
+            'min': cloud_range[0],
+            'max': cloud_range[1],
+            'includeUnknown': True
+        }
+    
+    if boundary:
+        with open(boundary) as file:
+            geojson = format_geojson(file)
+        
+        spatial_filter = {
+            'filterType': 'geojson',
+            'geoJson': geojson
+        }
+            
+    scene_filter = {
+        'acquisitionFilter': acquisition_filter,
+        'cloudCoverFilter': cloud_cover_filter,
+        'datasetName': dataset,
+        'ingestFilter': ingest_filter,
+        'metadataFilter': metadata_filter,
+        'seasonalFilter': seasonal_filter,
+        'spatialFilter': spatial_filter
+    }
+    
+    payload = { 
+        'datasetName': dataset,
+        'maxResults': max_results,
+        'startingNumber': 1, 
+        'sceneFilter': scene_filter
+    }
+    
+    matching_scenes = send_request(url + "scene-search", payload, api_key, verbose=verbose)['results']
+    entityIds = []
+    for scene in matching_scenes:
+        entityIds.append(scene['entityId'])
+    
+    # add scenes to list
+    list_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    payload = {
+        'listId': list_id,
+        'entityIds': entityIds,
+        'datasetName': dataset
+    }
+    
+    num_scenes = send_request(url + "scene-list-add", payload, api_key, verbose=verbose)   
+    
+    # get download options
+    payload = {
+        'listId': list_id,
+        'datasetName': dataset
+    }
+    
+    products = send_request(url + "download-options", payload, api_key, verbose=verbose)
+    downloads = []
+    for product in products:
+        if product['bulkAvailable']:         
+            downloads.append({'entityId':product['entityId'], 'productId':product['id']})
+    
+    # remove the list
+    payload = {
+        'listId': list_id
+    }
+    
+    send_request(url + "scene-list-remove", payload, api_key, verbose=verbose) 
+    
+    return downloads
+
+
+class JSONFormatError(Exception):
+    pass
+
+
+""" Translate geojson into a format that the API understands. """
+def format_geojson(geojson):
+    geojson = dict(json.load(geojson))  
+    try:
+        if geojson['type'] == 'FeatureCollection':
+            if len(geojson['features']) != 1:
+                raise JSONFormatError(("Unsupported number of GeoJSON features: {len(geojson['features'])}."))
+            geometry = geojson['features'][0]['geometry']
+        elif geojson['type'] == 'Feature':
+            geometry = geojson['geometry']
+        else:
+            raise JSONFormatError(f"Unsupported GeoJSON type: {geojson['type']}")
+
+        formatted = {}
+        formatted['type'] = geometry['type']
+        formatted['coordinates'] = geometry['coordinates']
+        return formatted
+    except KeyError as e:
+        raise JSONFormatError(f"Error parsing JSON: missing {e} field")
+        
+
+def download(url, api_key, downloads, completed_list=[], verbose=True):
+    if verbose:
+        download = input(f"Download all {len(downloads)} scenes? (Y/N) ")
+        if download.lower() not in {'y', 'yes'}:
+            return None
+        
+    if verbose: print("Requesting scenes for download...")
+    label = datetime.now().strftime("%Y%m%d_%H%M%S")
+    payload = {
+        'downloads': downloads,
+        'label': label
+    }
+    
+    results = send_request(url + "download-request", payload, api_key, verbose=verbose)
+    
+    for result in results['availableDownloads']:       
+        threaded_download(result['url'], threads, completed_list, verbose)
+    
+    # if downloads not immediately available, poll until they become available
+    preparing_dl_count = len(results['preparingDownloads'])
+    preparing_dl_ids = []
+    if preparing_dl_count > 0:
+        if verbose: print("Waiting for all downloads to become available...")
+        for result in results['preparingDownloads']:  
+            preparing_dl_ids.append(result['downloadId'])
+        payload = {"label" : label}   
+        while len(preparing_dl_ids) > 0: 
+            time.sleep(30)
+            results = send_request(url + "download-retrieve", payload, api_key, False, verbose=verbose)
+            if results != False:
+                for result in results['available']:                            
+                    if result['downloadId'] in preparing_dl_ids:
+                        preparing_dl_ids.remove(result['downloadId'])
+                        threaded_download(result['url'], threads, completed_list, verbose)
+                        
+                for result in results['requested']:   
+                    if result['downloadId'] in preparing_dl_ids:
+                        preparing_dl_ids.remove(result['downloadId'])
+                        threaded_download(result['url'], threads, completed_list, verbose)
+                        
+    return completed_list
+
+
+def process_metadata(folder):
+    # TODO: what metadata files do we actually care about?
+    metadata_files = ['ANG', 'MTL.txt']
+    return get_matching_files(folder, metadata_files) 
+
+
+def main():
+    url = "https://m2m.cr.usgs.gov/api/api/json/stable/"
+    dataset = "landsat_ot_c2_l2"
+    # TODO: should we store images in s3 sorted by date, or collection?
+    bucket = ""
+    prefix = ""
+    verbose = True
+    
+    api_key = authenticate(url, verbose=verbose)
+    
+    date_range = ('2021-07-01', '2021-07-31')
+    cloud_range = (0, 30)
+    downloads = search(url, api_key, verbose, dataset,  
+                        date_range=date_range, 
+                        cloud_range=cloud_range, 
+                        boundary=json_bounds_file)
+    
+    completed_list = []
+    download(url, api_key, downloads, completed_list, verbose)
+    
+    # wait until all downloads have finished
+    for thread in threads:
+        while thread.is_alive():
+            time.sleep(30)
+    
+    # unzip each file and generate tif, qa, and metadata files for each to be uploaded to s3
+    for file in completed_list:
+        # TODO: make this a function?
+        
+        unzipped = extract(file, delete=False, verbose=True)
+        
+        if verbose: print(f"Building VRTs and generating metadata files for {unzipped}...")
+        # select B, G, R, and NIR bands
+        rgbnir_bands = ['B2', 'B3', 'B4', 'B5']
+        rgbnir_name = f"{unzipped}{os.path.sep}rgbnir.vrt"
+        rgbnir_band_filenames = build_vrt(rgbnir_name, unzipped, rgbnir_bands)
+        
+        # select all QA bands
+        # TODO: what QA bands do we actually need?
+        qa_bands = ['QA']
+        qa_name = f"{unzipped}{os.path.sep}qa.vrt"
+        qa_band_filenames = build_vrt(qa_name, unzipped, qa_bands)
+        
+        metadata_filenames = process_metadata(unzipped)
+        
+        if verbose: print("Deleting extra files...")
+        keep_files = []
+        keep_files.extend(rgbnir_band_filenames)
+        keep_files.extend(qa_band_filenames)
+        keep_files.extend(metadata_filenames)
+        keep_files.extend([rgbnir_name, qa_name])
+        all_files = [f"{unzipped}{os.path.sep}{f}" for f in os.listdir(unzipped)]
+        delete_files = [f for f in all_files if f not in keep_files]
+        for file in delete_files:
+            os.remove(file)
+        
+        # upload to s3
+
+    if verbose: print("Done.")
+
+
+if __name__ == "__main__":
+    main()
