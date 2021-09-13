@@ -16,7 +16,9 @@ json_bounds_file = "../polygons/geojson/boundary.geojson"
 
 """ Log in to the API and return the API key to use with future requests. """
 def authenticate(url, username=None, password=None, verbose=True):
-    # Register for USGS EROS credentials here: https://ers.cr.usgs.gov/register
+    # To access the API, first register for USGS Eros credentials here: https://ers.cr.usgs.gov/register
+    # Next, log in and request access to the M2M API here: https://ers.cr.usgs.gov/profile/access
+    # It might take a few days to be granted access.
     if not username or not password:
         username, password = get_credentials("USGS Eros Username: ")
     payload = {'username': username, 'password': password}
