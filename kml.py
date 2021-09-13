@@ -49,7 +49,16 @@ def geojson_to_earth_engine(geojson_file_paths):
         with open(geojson_path, 'r') as json_file:
             geojson_dict = json.loads(json_file.read())
             if "Tracks" in geojson_path:
+                # special dealings with lot file
                 feature_type, feature_obj = geojson_feature_parser(geojson_dict, transform_to_polygons=True)
+                try:
+                    geojson_feature_string = json.dumps(feature_obj.getInfo())
+                    # cut off extension and directory for new extension and directory
+                    output_geojson_path = os.path.join("output_geojson", os.path.split(geojson_path.split(".")[0])[-1] + ".json")
+                    with open(output_geojson_path, 'w') as output_geojson:
+                        output_geojson.write(geojson_feature_string)
+                except Exception as e:
+                    print("Error attempting to convert ee object into geojson: ", e)
             else:
                 feature_type, feature_obj = geojson_feature_parser(geojson_dict)
             if feature_type is None or feature_obj is None: # this c
@@ -161,13 +170,15 @@ def turn_lots_into_polygons(features):
     # How far apart lots must be to be combined into one polygon, 2.1*BUFFER as to not have buffered polygons overlap
     TOLERANCE = 2.1 * BUFFER  
     
-    # temp_list = [12, 20, 79, 91]
-    # temp_list2 = [902, 1326, 138, 126]
+    temp_list = [12, 20, 79, 91]
+    temp_list2 = [902, 1326, 138, 126]
     print('Number of features:', len(features))
     time.sleep(2)
     new_feature_list = []
     skip_dict = {}      # an attempt to not edit the list while iterating through it in order to ignore features we've already turned into polygons
     for i, feature in enumerate(features):
+        if i not in temp_list:
+            continue
         print('top feature', i)
         if i in skip_dict:
             continue
@@ -183,6 +194,8 @@ def turn_lots_into_polygons(features):
         t1 = time.perf_counter()
         for j, nested_feature in enumerate(features):
             #print('nested feature', j)
+            if j not in temp_list2:
+                continue
             if j in skip_dict:
                 continue
             nested_feature_info = nested_feature.getInfo()
@@ -203,7 +216,7 @@ def turn_lots_into_polygons(features):
         t2 = time.perf_counter()
         print('time elapsed:', t2-t1, 'seconds')
         polygon = ee.Geometry.Polygon(remove_duplicate_coordinates(coordinates_to_combine))
-        polygon = polygon.buffer(BUFFER)
+        #polygon = polygon.buffer(BUFFER)
         new_feature_list.append(polygon)
     return new_feature_list
 
