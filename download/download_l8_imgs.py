@@ -3,7 +3,7 @@ import time
 import os
 from datetime import datetime
 
-from util import get_credentials, send_request, threaded_download, threads, extract, get_matching_files, build_vrt
+from util import *
 
 # TODO: remove hardcoded parameters
 json_bounds_file = "../polygons/geojson/boundary.geojson"
@@ -216,19 +216,25 @@ def main():
     for file in completed_list:
         # TODO: make this a function?
         
-        unzipped = extract(file, delete=True, verbose=verbose)
+        if verbose: print(f"Extracting {file}...")
+        unzipped = extract(file, delete=True)
         
-        if verbose: print(f"Building VRTs and generating metadata files for {unzipped}...")
+        if verbose: print(f"Calculating NDVI for {unzipped}...")
+        ndvi = calc_ndvi('B4', 'B5', unzipped)
+        
+        # if verbose: print(f"Building VRTs and generating metadata files for {unzipped}...")
         # select B, G, R, and NIR bands
         rgbnir_bands = ['B2', 'B3', 'B4', 'B5']
-        rgbnir_name = f"{unzipped}{os.path.sep}rgbnir.vrt"
-        rgbnir_band_filenames = build_vrt(rgbnir_name, unzipped, rgbnir_bands)
+        rgbnir_band_filenames = get_matching_files(unzipped, rgbnir_bands)
+        # rgbnir_name = f"{unzipped}{os.path.sep}rgbnir.vrt"
+        # rgbnir_band_filenames = build_vrt(rgbnir_name, unzipped, rgbnir_bands)
         
-        # select all QA bands
-        # TODO: what QA bands do we actually need?
+        # # select all QA bands
+        # # TODO: what QA bands do we actually need?
         qa_bands = ['QA']
-        qa_name = f"{unzipped}{os.path.sep}qa.vrt"
-        qa_band_filenames = build_vrt(qa_name, unzipped, qa_bands)
+        qa_band_filenames = get_matching_files(unzipped, qa_bands)
+        # qa_name = f"{unzipped}{os.path.sep}qa.vrt"
+        # qa_band_filenames = build_vrt(qa_name, unzipped, qa_bands)
         
         metadata_filenames = process_metadata(unzipped)
         
@@ -237,13 +243,14 @@ def main():
         keep_files.extend(rgbnir_band_filenames)
         keep_files.extend(qa_band_filenames)
         keep_files.extend(metadata_filenames)
-        keep_files.extend([rgbnir_name, qa_name])
+        keep_files.extend([ndvi])
+        # keep_files.extend([rgbnir_name, qa_name])
         all_files = [f"{unzipped}{os.path.sep}{f}" for f in os.listdir(unzipped)]
         delete_files = [f for f in all_files if f not in keep_files]
         for file in delete_files:
             os.remove(file)
         
-        # upload to s3
+        # TODO: upload to s3
 
     if verbose: print("Done.")
 

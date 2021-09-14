@@ -9,6 +9,7 @@ import zipfile
 import tarfile
 import glob
 
+import numpy as np
 from osgeo import gdal
 import boto3
 from botocore.exceptions import ClientError
@@ -28,7 +29,7 @@ def get_credentials(prompt="Username: "):
 
 
 """ Send an HTTP POST request. """
-def send_request(url, data, apiKey = None, exitIfNoResponse = True, verbose = True):  
+def send_request(url, data, apiKey=None, exitIfNoResponse=True, verbose=True):  
     json_data = json.dumps(data)
     
     if apiKey == None:
@@ -71,7 +72,7 @@ def send_request(url, data, apiKey = None, exitIfNoResponse = True, verbose = Tr
 
 
 """ Download a file from the specified URL. Will append to completed_list if provided. """
-def download_file(url, completed_list = [], max_tries=5, verbose=True,):
+def download_file(url, completed_list = [], max_tries=5, verbose=True):
     sema.acquire()
     try:        
         response = requests.get(url, stream=True)
@@ -102,11 +103,10 @@ def threaded_download(url, threads, completed_list=[], max_tries=5, verbose=True
 
 """ Extract either a .zip or a .tar archive. If provided, will extract to outfolder.
     If delete is set to True, it will delete the archive after extraction. """
-def extract(file, outfolder=None, delete=False, verbose=True):
+def extract(file, outfolder=None, delete=False):
     filename, ext = os.path.splitext(file)
     if not outfolder:
         outfolder = filename
-    if verbose: print(f"Unzipping {file}...")
     if ext == ".zip":
         extract_zip(file, outfolder)
     elif ext == ".tar":
@@ -138,7 +138,62 @@ def build_vrt(output=None, folder=".", bands=None, **kwargs):
     return band_filenames
 
 
-def calc_ndvi()
+""" Given two tifs representing a red and NIR band respectively, calculated the
+    NDVI and save it as a new tif.
+    Assumes the red & NIR bands have the same projection, size, and geotransform.
+    Behavior is undefined otherwise. """
+def calc_ndvi(red_band, nir_band, folder=".", outname=None):
+    red_band_list = get_matching_files(folder, [red_band])
+    nir_band_list = get_matching_files(folder, [nir_band])
+    if len(red_band_list) != 1 or len(nir_band_list) != 1:
+        raise ValueError("Error: red band and NIR band should each match exactly one tif file")
+    red_band_file = red_band_list[0]
+    nir_band_file = nir_band_list[0]
+    
+    red_ds = gdal.Open(red_band_file)
+    red = red_ds.GetRasterBand(1).ReadAsArray().astype(np.float64)
+    nir_ds = gdal.Open(nir_band_file)
+    nir = nir_ds.GetRasterBand(1).ReadAsArray().astype(np.float64)
+    
+    # TODO: this throws a warning, but the actual file looks fine. I'm guessing
+    # it has to do with the fact that the tifs are rotated--maybe numpy is padding
+    # them with zeroes to compensate, which causes some calculations to be 0/0.
+    ndvi = np.divide(np.subtract(nir, red), np.add(nir, red))
+    ndvi = np.where(ndvi == np.inf, np.nan, ndvi)
+    # match location and general formatting of other bands so we place ndvi band
+    # in the correct spot and name it similarly
+    regex = re.compile(rf"""
+                        (?P<path>.*[/\\])?                           # match any folders before band name
+                        (?P<band_name>.*(?={red_band}(.tif|.TIF)))   # match general band name before suffix (ex. everything up to B5.tif)
+                        """, re.VERBOSE)
+    m = regex.match(red_band_file)
+    ndvi_band_file = f"{m.group('path')}{m.group('band_name')}NDVI.TIF"
+    
+    # base projection, size, and geotransform off red band
+    model_ds = gdal.Open(red_band_file)
+    gt = model_ds.GetGeoTransform()
+    proj = model_ds.GetProjection()
+    xsize = red.shape[1]
+    ysize = red.shape[0]
+    
+    driver = gdal.GetDriverByName("GTiff")
+    driver.Register()
+    outds = driver.Create(ndvi_band_file, 
+                          xsize = xsize, 
+                          ysize = ysize,
+                          bands = 1,
+                          eType = gdal.GDT_Float32)
+    outds.SetGeoTransform(gt)
+    outds.SetProjection(proj)
+    outband = outds.GetRasterBand(1)
+    outband.WriteArray(ndvi)
+    outband.SetNoDataValue(np.nan) 
+    outband.FlushCache()
+    
+    # free data so it writes to disk properly
+    red_ds = red = nir_ds = nir = ndvi = model_ds = gt = proj = outds = outband = None
+    return ndvi_band_file
+    
     
 """ Given a folder and a list of substrings, return all files that match one of the substrings.
     A downloaded Landsat-8 product, for example, will include several bands as well as metadata
@@ -159,7 +214,6 @@ def upload_to_s3(filename, bucket, prefix, s3):
         print("Uploading " + filename + " to s3...")
         s3.meta.client.upload_file(Filename=filename, Bucket=bucket, Key=key)
     except ClientError as e:
-        # TODO: better error handling?
         print("Error while trying to upload " + filename + ": " +  e)
     os.remove(filename)
     
