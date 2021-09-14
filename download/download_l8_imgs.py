@@ -30,7 +30,7 @@ def authenticate(url, username=None, password=None, verbose=True):
 """ Search for images matching a certain criteria, and return a list of products that
     can be downloaded. date_range and cloud_range should be tuples, and boundary should
     point to a GeoJSON file. Reserving **kwargs to be used in the future if needed. """
-def search(url, api_key, verbose=True, dataset=None, max_results = 10, date_range=None, cloud_range=None, boundary=None, **kwargs):
+def search(url, api_key, dataset=None, max_results = 10, date_range=None, cloud_range=None, boundary=None, verbose=True, **kwargs):
     if verbose: print("Fetching scenes...")
     
     # search for scenes that match our criteria
@@ -153,7 +153,7 @@ def download(url, api_key, downloads, completed_list=[], verbose=True):
     results = send_request(url + "download-request", payload, api_key, verbose=verbose)
     
     for result in results['availableDownloads']:       
-        threaded_download(result['url'], threads, completed_list, verbose)
+        threaded_download(result['url'], threads, completed_list, verbose=verbose)
     
     # if downloads not immediately available, poll until they become available
     preparing_dl_count = len(results['preparingDownloads'])
@@ -170,12 +170,12 @@ def download(url, api_key, downloads, completed_list=[], verbose=True):
                 for result in results['available']:                            
                     if result['downloadId'] in preparing_dl_ids:
                         preparing_dl_ids.remove(result['downloadId'])
-                        threaded_download(result['url'], threads, completed_list, verbose)
+                        threaded_download(result['url'], threads, completed_list, verbose=verbose)
                         
                 for result in results['requested']:   
                     if result['downloadId'] in preparing_dl_ids:
                         preparing_dl_ids.remove(result['downloadId'])
-                        threaded_download(result['url'], threads, completed_list, verbose)
+                        threaded_download(result['url'], threads, completed_list, verbose=verbose)
                         
     return completed_list
 
@@ -198,13 +198,14 @@ def main():
     
     date_range = ('2021-07-01', '2021-07-31')
     cloud_range = (0, 30)
-    downloads = search(url, api_key, verbose, dataset,  
+    downloads = search(url, api_key, dataset,  
                         date_range=date_range, 
                         cloud_range=cloud_range, 
-                        boundary=json_bounds_file)
+                        boundary=json_bounds_file,
+                        verbose=verbose)
     
     completed_list = []
-    download(url, api_key, downloads, completed_list, verbose)
+    download(url, api_key, downloads, completed_list, verbose=verbose)
     
     # wait until all downloads have finished
     for thread in threads:
@@ -215,7 +216,7 @@ def main():
     for file in completed_list:
         # TODO: make this a function?
         
-        unzipped = extract(file, delete=False, verbose=True)
+        unzipped = extract(file, delete=True, verbose=verbose)
         
         if verbose: print(f"Building VRTs and generating metadata files for {unzipped}...")
         # select B, G, R, and NIR bands

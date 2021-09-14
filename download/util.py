@@ -71,7 +71,7 @@ def send_request(url, data, apiKey = None, exitIfNoResponse = True, verbose = Tr
 
 
 """ Download a file from the specified URL. Will append to completed_list if provided. """
-def download_file(url, completed_list = [], verbose=True, max_tries=5):
+def download_file(url, completed_list = [], max_tries=5, verbose=True,):
     sema.acquire()
     try:        
         response = requests.get(url, stream=True)
@@ -89,13 +89,13 @@ def download_file(url, completed_list = [], verbose=True, max_tries=5):
         if verbose: print(f"Failed to download from {url}: {e}")
         if max_tries > 0:
             if verbose: print("Attempting to redownload...")
-            threaded_download(url, threads, completed_list, verbose, max_tries - 1)
+            threaded_download(url, threads, completed_list, max_tries - 1, verbose=verbose)
         else:
             if verbose: print("Max number of tries exceeded. Aborting...")
     
 """ Download a file from the specified URL in a new thread. Will append to completed_list if provided. """    
-def threaded_download(url, threads, completed_list=[], verbose=True, max_tries=5):
-    thread = threading.Thread(target=download_file, args=(url, completed_list, verbose, max_tries))
+def threaded_download(url, threads, completed_list=[], max_tries=5, verbose=True):
+    thread = threading.Thread(target=download_file, args=(url, completed_list, max_tries, verbose))
     threads.append(thread)
     thread.start()
     
@@ -136,7 +136,9 @@ def build_vrt(output=None, folder=".", bands=None, **kwargs):
     # free data so it writes to disk properly
     vrt = None
     return band_filenames
-    
+
+
+def calc_ndvi()
     
 """ Given a folder and a list of substrings, return all files that match one of the substrings.
     A downloaded Landsat-8 product, for example, will include several bands as well as metadata
