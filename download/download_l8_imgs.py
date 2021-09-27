@@ -1,11 +1,13 @@
 import json
 import time
-import os
 import argparse
+import re
 from datetime import datetime
 from pathlib import Path
 
-from util import *
+import boto3
+
+from util import get_credentials, send_request, threaded_download, threads, s3_join, upload_to_s3
 
 
 # --------------------------------------------------------------------------- #
@@ -180,31 +182,26 @@ def download(url, api_key, downloads, completed_list=[], verbose=True):
     return completed_list
 
 
-def process_metadata(folder):
-    # TODO: what metadata files do we actually care about?
-    metadata_files = ['ANG', 'MTL.txt']
-    return get_matching_files(folder, metadata_files) 
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description='Search for and download L8 scenes that match criteria.')
+        description="Search for and download L8 scenes that match criteria.")
     
-    parser.add_argument('-date-range', '--dr', metavar=('start', 'end'), 
-                        dest='date_range', nargs=2, type=str,
-                        help='filter scenes by acquisition date (format: yyyy-mm-dd yyyy-mm-dd)')
-    parser.add_argument('-cloud-range', '--cr', metavar=('min', 'max'),
-                        dest='cloud_range', nargs=2, type=int,
-                        help='filter scenes by cloud cover')
-    parser.add_argument('-boundary', '--b', metavar='geojson',
-                        dest='boundary', type=Path,
+    parser.add_argument("-date-range", "--dr", metavar=("start", "end"), 
+                        dest="date_range", nargs=2, type=str,
+                        help="filter scenes by acquisition date (format: yyyy-mm-dd yyyy-mm-dd)")
+    parser.add_argument("-cloud-range", "--cr", metavar=("min", "max"),
+                        dest="cloud_range", nargs=2, type=int,
+                        help="filter scenes by cloud cover")
+    parser.add_argument("-boundary", "--b", metavar="geojson",
+                        dest="boundary", type=Path,
                         help="path to geojson file with boundary of search")
+    parser.add_argument("-dst", type=str,
+                        help="s3 bucket to store downloaded scenes in")
     args = parser.parse_args()
     
     url = "https://m2m.cr.usgs.gov/api/api/json/stable/"
     dataset = "landsat_ot_c2_l2"
-    bucket = ""
-    prefix = ""
+    dataset_name = "landsat"
     # TODO: add verbosity flag as argument
     verbose = True
     
@@ -224,46 +221,38 @@ def main():
         while thread.is_alive():
             time.sleep(30)
     
-    # unzip each file and generate tif, qa, and metadata files for each to be uploaded to s3
-    for file in completed_list:
-        # TODO: make this a function?
-        
-        if verbose: print(f"Extracting {file}...")
-        unzipped = extract(file, delete=True)
-        
-        if verbose: print(f"Calculating NDVI for {unzipped}...")
-        ndvi = calc_ndvi('B4', 'B5', unzipped)
-        
-        # if verbose: print(f"Building VRTs and generating metadata files for {unzipped}...")
-        # select B, G, R, and NIR bands
-        rgbnir_bands = ['B2', 'B3', 'B4', 'B5']
-        rgbnir_band_filenames = get_matching_files(unzipped, rgbnir_bands)
-        # rgbnir_name = f"{unzipped}{os.path.sep}rgbnir.vrt"
-        # rgbnir_band_filenames = build_vrt(rgbnir_name, unzipped, rgbnir_bands)
-        
-        # # select all QA bands
-        # # TODO: what QA bands do we actually need?
-        qa_bands = ['QA']
-        qa_band_filenames = get_matching_files(unzipped, qa_bands)
-        # qa_name = f"{unzipped}{os.path.sep}qa.vrt"
-        # qa_band_filenames = build_vrt(qa_name, unzipped, qa_bands)
-        
-        metadata_filenames = process_metadata(unzipped)
-        
-        if verbose: print("Deleting extra files...")
-        keep_files = []
-        keep_files.extend(rgbnir_band_filenames)
-        keep_files.extend(qa_band_filenames)
-        keep_files.extend(metadata_filenames)
-        keep_files.extend([ndvi])
-        # keep_files.extend([rgbnir_name, qa_name])
-        all_files = [f"{unzipped}{os.path.sep}{f}" for f in os.listdir(unzipped)]
-        delete_files = [f for f in all_files if f not in keep_files]
-        for file in delete_files:
-            os.remove(file)
-        
-        TODO: upload to s3
-
+    # upload files to s3 if bucket is specified
+    if args.dst:
+        # assuming you have set up aws credentials properly
+        # TODO: add command line argument to change profile?
+        s3 = boto3.resource('s3')
+        # a full breakdown of the naming convention can be found here:
+        # https://www.usgs.gov/faqs/what-naming-convention-landsat-collection-2-level-1-and-level-2-scenes?qt-news_science_products=0#qt-news_science_products
+        l8_name_pattern = re.compile(r"""
+                       (?P<sat>L\w{3})         # match the sensor type and satellite (ex. LC08)
+                       (?:_)
+                       (?P<level>L\w{3})       # match the processing level (ex. L2SP)
+                       (?:_)
+                       (?P<path>\d{3})         # match the path
+                       (?P<row>\d{3})          # match the row
+                       (?:_)
+                       (?P<acq_year>\d{4})     # match the acquisition year
+                       (?P<acq_month>\d{2})    # match the acquisition month
+                       (?P<acq_day>\d{2})      # match the acquisition day
+                       (?:_)
+                       (?P<proc_year>\d{8})    # match the processing year
+                       (?:_)
+                       (?P<col_number>\d{2})   # match the collection number
+                       (?:_)
+                       (?P<col_category>\w{2}) # match the collection category
+                       (?:.tar)
+                       """, re.VERBOSE)
+        for file in completed_list:
+            m = l8_name_pattern.match(file)
+            prefix = s3_join(dataset_name, m.group('path'), m.group('row'), m.group('acq_year'),
+                             m.group('acq_month'), m.group('acq_day'))
+            upload_to_s3(file, args.dst, prefix, s3, delete=True, verbose=verbose)
+            
     if verbose: print("Done.")
     
 
