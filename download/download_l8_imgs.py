@@ -262,7 +262,7 @@ def main():
         for file in delete_files:
             os.remove(file)
         
-        TODO: upload to s3
+        # TODO: upload to s3
 
     if verbose: print("Done.")
     
