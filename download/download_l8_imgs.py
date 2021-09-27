@@ -1,12 +1,12 @@
 import json
 import time
 import os
+import argparse
 from datetime import datetime
+from pathlib import Path
 
 from util import *
 
-# TODO: remove hardcoded parameters
-json_bounds_file = "../polygons/geojson/boundary.geojson"
 
 # --------------------------------------------------------------------------- #
 # Code adapted from UGSS M2M API sample script
@@ -139,7 +139,7 @@ def format_geojson(geojson):
 
 def download(url, api_key, downloads, completed_list=[], verbose=True):
     if verbose:
-        download = input(f"Download all {len(downloads)} scenes? (Y/N) ")
+        download = input(f"Download all {len(downloads)} scene(s)? (Y/N) ")
         if download.lower() not in {'y', 'yes'}:
             return None
         
@@ -187,21 +187,33 @@ def process_metadata(folder):
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description='Search for and download L8 scenes that match criteria.')
+    
+    parser.add_argument('-date-range', '--dr', metavar=('start', 'end'), 
+                        dest='date_range', nargs=2, type=str,
+                        help='filter scenes by acquisition date (format: yyyy-mm-dd yyyy-mm-dd)')
+    parser.add_argument('-cloud-range', '--cr', metavar=('min', 'max'),
+                        dest='cloud_range', nargs=2, type=int,
+                        help='filter scenes by cloud cover')
+    parser.add_argument('-boundary', '--b', metavar='geojson',
+                        dest='boundary', type=Path,
+                        help="path to geojson file with boundary of search")
+    args = parser.parse_args()
+    
     url = "https://m2m.cr.usgs.gov/api/api/json/stable/"
     dataset = "landsat_ot_c2_l2"
-    # TODO: should we store images in s3 sorted by date, or collection?
     bucket = ""
     prefix = ""
+    # TODO: add verbosity flag as argument
     verbose = True
     
     api_key = authenticate(url, verbose=verbose)
     
-    date_range = ('2021-07-01', '2021-07-31')
-    cloud_range = (0, 30)
     downloads = search(url, api_key, dataset,  
-                        date_range=date_range, 
-                        cloud_range=cloud_range, 
-                        boundary=json_bounds_file,
+                        date_range=args.date_range, 
+                        cloud_range=args.cloud_range, 
+                        boundary=args.boundary,
                         verbose=verbose)
     
     completed_list = []
@@ -250,10 +262,10 @@ def main():
         for file in delete_files:
             os.remove(file)
         
-        # TODO: upload to s3
+        TODO: upload to s3
 
     if verbose: print("Done.")
-
+    
 
 if __name__ == "__main__":
     main()
