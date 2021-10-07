@@ -79,6 +79,8 @@ def calc_ndvi_and_mask_l8_clouds(red_band, nir_band, qa_band, folder="."):
     return ndvi_masked_file
     
 def main():
+    # TODO: make this a lambda function.
+    # right now this is more of a proof of concept
     folder = "LC08_L2SP_008056_20210715_20210721_02_T1"
     calc_ndvi_and_mask_l8_clouds("B4", "B5", "QA_PIXEL", folder)
 
