@@ -2,3 +2,5 @@
 vis/
 misc/
 __pycache__/
+downloaded/
+*.pem
