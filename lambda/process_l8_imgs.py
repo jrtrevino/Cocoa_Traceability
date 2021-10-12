@@ -1,21 +1,41 @@
+import urllib.parse
 import os
-import re
 
-import numpy as np
 from osgeo import gdal
+import numpy as np
+import boto3
 
-from util import get_matching_files
-
-
-def calc_ndvi_and_mask_l8_clouds(red_band, nir_band, qa_band, folder="."):
-    red_band_list = get_matching_files(folder, [red_band])
-    nir_band_list = get_matching_files(folder, [nir_band])
-    qa_band_list = get_matching_files(folder, [qa_band])
-    if len(red_band_list) != 1 or len(nir_band_list) != 1 or len(qa_band_list) != 1:
-        raise ValueError("Error: provided band names should each match exactly one tif file")
-    red_band_file = red_band_list[0]
-    nir_band_file = nir_band_list[0]
-    qa_band_file = qa_band_list[0]
+def lambda_handler(event, context):
+    bucket = event['Records'][0]['s3']['bucket']['name']
+    key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'], encoding='utf-8')
+    
+    # we can only write files to the tmp directory (max. 512 mb)
+    os.chdir("/tmp")
+    
+    # vsitar tells gdal that the file is a tarfile
+    # vsis3 tells gdal that the file is in an s3 bucket
+    result = calc_ndvi_and_mask_l8_clouds(f"/vsitar/vsis3/{bucket}/{key}")
+    print(f"Generated {result}")
+    
+    # upload generated file to s3
+    dest_bucket = "processed-granules"
+    prefix = os.path.dirname(key)
+    key = f"{prefix}/{result}"
+    s3 = boto3.client('s3')
+    s3.upload_file(result, dest_bucket, key)
+    print(f"Uploaded {key} to {dest_bucket}")
+    
+    
+""" Given a Landsat 8 scene, caclulate NDVI, mask clouds, and upload the result in dest_bucket. """
+def calc_ndvi_and_mask_l8_clouds(file):
+    red_band = "SR_B4"
+    nir_band = "SR_B5"
+    qa_band = "QA_PIXEL"
+    
+    base_name = os.path.splitext(os.path.basename(file))[0]
+    red_band_file = f"{file}/{base_name}_{red_band}.TIF"
+    nir_band_file = f"{file}/{base_name}_{nir_band}.TIF"
+    qa_band_file = f"{file}/{base_name}_{qa_band}.TIF"
     
     # open red, nir, and qa tif files
     red_ds = gdal.Open(red_band_file)
@@ -48,14 +68,7 @@ def calc_ndvi_and_mask_l8_clouds(red_band, nir_band, qa_band, folder="."):
     xsize = red_ds.RasterXSize
     ysize = red_ds.RasterYSize
     
-    # match location and general formatting of other bands so we place ndvi band
-    # in the correct spot and name it similarly
-    regex = re.compile(rf"""
-                        (?P<path>.*[/\\])?                           # match any folders before band name
-                        (?P<band_name>.*(?={red_band}(.tif|.TIF)))   # match general band name before suffix (ex. everything up to B5.tif)
-                        """, re.VERBOSE)
-    m = regex.match(red_band_file)
-    ndvi_masked_file = f"{m.group('path')}{m.group('band_name')}NDVI_MASKED.TIF"
+    ndvi_masked_file = f"{base_name}_NDVI_MASKED.TIF"
     
     # write mask to new file
     driver = gdal.GetDriverByName("GTiff")
@@ -77,13 +90,3 @@ def calc_ndvi_and_mask_l8_clouds(red_band, nir_band, qa_band, folder="."):
     red = nir = qa = ndvi_masked = None
     
     return ndvi_masked_file
-    
-def main():
-    # TODO: make this a lambda function.
-    # right now this is more of a proof of concept
-    folder = "LC08_L2SP_008056_20210715_20210721_02_T1"
-    calc_ndvi_and_mask_l8_clouds("B4", "B5", "QA_PIXEL", folder)
-
-
-if __name__ == "__main__":
-    main()
