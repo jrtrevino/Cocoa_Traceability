@@ -32,7 +32,7 @@ def authenticate(url, username=None, password=None, verbose=True):
 """ Search for images matching a certain criteria, and return a list of products that
     can be downloaded. date_range and cloud_range should be tuples, and boundary should
     point to a GeoJSON file. Reserving **kwargs to be used in the future if needed. """
-def search(url, api_key, dataset=None, max_results = 10, date_range=None, cloud_range=None, boundary=None, verbose=True, **kwargs):
+def search(url, api_key, dataset=None, max_results=50, date_range=None, cloud_range=None, boundary=None, verbose=True, **kwargs):
     if verbose: print("Fetching scenes...")
     
     # search for scenes that match our criteria
@@ -250,7 +250,7 @@ def main():
         for file in completed_list:
             m = l8_name_pattern.match(file)
             prefix = s3_join(dataset_name, m.group('path'), m.group('row'), m.group('acq_year'),
-                             m.group('acq_month'), m.group('acq_day'))
+                             m.group('acq_month'))
             upload_to_s3(file, args.dst, prefix, s3, delete=True, verbose=verbose)
             
     if verbose: print("Done.")
