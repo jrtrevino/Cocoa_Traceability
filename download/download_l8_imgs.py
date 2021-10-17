@@ -2,11 +2,13 @@ import json
 import time
 import argparse
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 
 import boto3
 
+import util
 from util import get_credentials, send_request, threaded_download, threads, s3_join, upload_to_s3
 
 
@@ -192,29 +194,38 @@ def main():
     parser.add_argument("-cloud-range", "--cr", metavar=("min", "max"),
                         dest="cloud_range", nargs=2, type=int,
                         help="filter scenes by cloud cover")
-    parser.add_argument("-boundary", "--b", metavar="geojson",
+    parser.add_argument("-boundary", "--b", metavar="path/to/geojson",
                         dest="boundary", type=Path,
                         help="path to geojson file with boundary of search")
-    parser.add_argument("-dst", type=str,
+    parser.add_argument("-dst", metavar="bucket", type=str,
                         help="s3 bucket to store downloaded scenes in")
+    parser.add_argument("-maxresults", "--mr", metavar="int",
+                        dest="max_results", type=int, default=50,
+                        help="max number of results to return from search")
+    parser.add_argument("-maxthreads", "--mt", metavar="int",
+                        dest="max_threads", type=int, default=5,
+                        help="max number of threads to use to download")
+    parser.add_argument("-quiet", "--q", dest="verbose", action="store_false",
+                        help="suppress printing to the console")
     args = parser.parse_args()
+    
+    util.sema = threading.Semaphore(value=args.max_threads)
     
     url = "https://m2m.cr.usgs.gov/api/api/json/stable/"
     dataset = "landsat_ot_c2_l2"
     dataset_name = "landsat"
-    # TODO: add verbosity flag as argument
-    verbose = True
     
-    api_key = authenticate(url, verbose=verbose)
+    api_key = authenticate(url, verbose=args.verbose)
     
-    downloads = search(url, api_key, dataset,  
-                        date_range=args.date_range, 
-                        cloud_range=args.cloud_range, 
-                        boundary=args.boundary,
-                        verbose=verbose)
+    downloads = search(url, api_key, dataset, 
+                       max_results=args.max_results, 
+                       date_range=args.date_range, 
+                       cloud_range=args.cloud_range, 
+                       boundary=args.boundary,
+                       verbose=args.verbose)
     
     completed_list = []
-    download(url, api_key, downloads, completed_list, verbose=verbose)
+    download(url, api_key, downloads, completed_list, verbose=args.verbose)
     
     # wait until all downloads have finished
     for thread in threads:
@@ -229,31 +240,31 @@ def main():
         # a full breakdown of the naming convention can be found here:
         # https://www.usgs.gov/faqs/what-naming-convention-landsat-collection-2-level-1-and-level-2-scenes?qt-news_science_products=0#qt-news_science_products
         l8_name_pattern = re.compile(r"""
-                       (?P<sat>L\w{3})         # match the sensor type and satellite (ex. LC08)
-                       (?:_)
-                       (?P<level>L\w{3})       # match the processing level (ex. L2SP)
-                       (?:_)
-                       (?P<path>\d{3})         # match the path
-                       (?P<row>\d{3})          # match the row
-                       (?:_)
-                       (?P<acq_year>\d{4})     # match the acquisition year
-                       (?P<acq_month>\d{2})    # match the acquisition month
-                       (?P<acq_day>\d{2})      # match the acquisition day
-                       (?:_)
-                       (?P<proc_year>\d{8})    # match the processing year
-                       (?:_)
-                       (?P<col_number>\d{2})   # match the collection number
-                       (?:_)
-                       (?P<col_category>\w{2}) # match the collection category
-                       (?:.tar)
-                       """, re.VERBOSE)
+                        (?P<sat>L\w{3})         # match the sensor type and satellite (ex. LC08)
+                        (?:_)
+                        (?P<level>L\w{3})       # match the processing level (ex. L2SP)
+                        (?:_)
+                        (?P<path>\d{3})         # match the path
+                        (?P<row>\d{3})          # match the row
+                        (?:_)
+                        (?P<acq_year>\d{4})     # match the acquisition year
+                        (?P<acq_month>\d{2})    # match the acquisition month
+                        (?P<acq_day>\d{2})      # match the acquisition day
+                        (?:_)
+                        (?P<proc_year>\d{8})    # match the processing year
+                        (?:_)
+                        (?P<col_number>\d{2})   # match the collection number
+                        (?:_)
+                        (?P<col_category>\w{2}) # match the collection category
+                        (?:.tar)
+                        """, re.VERBOSE)
         for file in completed_list:
             m = l8_name_pattern.match(file)
             prefix = s3_join(dataset_name, m.group('path'), m.group('row'), m.group('acq_year'),
-                             m.group('acq_month'))
-            upload_to_s3(file, args.dst, prefix, s3, delete=True, verbose=verbose)
+                              m.group('acq_month'))
+            upload_to_s3(file, args.dst, prefix, s3, delete=True, verbose=args.verbose)
             
-    if verbose: print("Done.")
+    if args.verbose: print("Done.")
     
 
 if __name__ == "__main__":

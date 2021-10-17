@@ -5,18 +5,12 @@ import sys
 import threading
 import re
 import os
-import zipfile
-import tarfile
 import glob
 
-import numpy as np
-from osgeo import gdal
 from botocore.exceptions import ClientError
 
 
-# TODO: remove these hardcoded variables
-maxthreads = 5 # threads count for downloads
-sema = threading.Semaphore(value=maxthreads)
+sema = None
 threads = []
 path = "" # download path
 
@@ -119,15 +113,3 @@ def s3_join(*elements):
     if len(elements) > 0:
         return os.path.join(*elements).replace("\\", "/")
     return ""
-
-
-""" Given a folder and a list of substrings, return all files that match one of the substrings.
-    A downloaded Landsat-8 product, for example, will include several bands as well as metadata
-    files, so we use this to only select the ones we care about, such as the RGB bands. """
-def get_matching_files(folder=".", files=[]):
-    filenames = []
-    for file in files:
-        match_pattern = f"**{os.path.sep}*{folder}*{os.path.sep}**{os.path.sep}*{file}*"
-        matches = glob.glob(match_pattern, recursive=True)
-        filenames.extend(matches)
-    return filenames
