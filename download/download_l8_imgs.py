@@ -5,11 +5,15 @@ import re
 import threading
 from datetime import datetime
 from pathlib import Path
+# make packages in different folders visible
+import sys
+sys.path.insert(1, "../lambda/")
 
 import boto3
 
 import util
 from util import get_credentials, send_request, threaded_download, threads, s3_join, upload_to_s3
+from process_l8_imgs import calc_ndvi_and_mask_l8_clouds
 
 
 # --------------------------------------------------------------------------- #
@@ -232,6 +236,12 @@ def main():
         while thread.is_alive():
             time.sleep(30)
     
+    # execute lambda function locally for testing
+    for file in completed_list:
+        file = f"/vsitar/{file}"
+        result = calc_ndvi_and_mask_l8_clouds(file)
+        if args.verbose: print(f"Generated {result}")
+        
     # upload files to s3 if bucket is specified
     if args.dst:
         # assuming you have set up aws credentials properly
@@ -261,7 +271,7 @@ def main():
         for file in completed_list:
             m = l8_name_pattern.match(file)
             prefix = s3_join(dataset_name, m.group('path'), m.group('row'), m.group('acq_year'),
-                              m.group('acq_month'))
+                             m.group('acq_month'))
             upload_to_s3(file, args.dst, prefix, s3, delete=True, verbose=args.verbose)
             
     if args.verbose: print("Done.")

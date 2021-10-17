@@ -83,7 +83,7 @@ def calc_ndvi_and_mask_l8_clouds(file):
     outband = out_ds.GetRasterBand(1)
     outband.WriteArray(ndvi_masked)
     outband.SetNoDataValue(np.nan)
-    outband.FlushCache
+    outband.FlushCache()
     
     # free data so it saves to disk properly
     red_ds = nir_ds = qa_ds = out_ds = outband = gt = proj = xsize = ysize = driver = None
