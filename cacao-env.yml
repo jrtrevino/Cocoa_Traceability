@@ -1,0 +1,14 @@
+name: cacao
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - boto3
+  - gdal
+  - git
+  - numpy
+  - pip
+  - python=3.9
+  - requests
+  - vim
+  - wget
