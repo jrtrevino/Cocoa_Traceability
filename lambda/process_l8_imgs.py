@@ -24,6 +24,7 @@ def lambda_handler(event, context):
     s3 = boto3.client('s3')
     s3.upload_file(result, dest_bucket, key)
     print(f"Uploaded {key} to {dest_bucket}")
+    os.remove(result)
     
     
 """ Given a Landsat 8 scene, caclulate NDVI, mask clouds, and upload the result in dest_bucket. """

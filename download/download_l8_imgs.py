@@ -143,7 +143,7 @@ def format_geojson(geojson):
 
 def download(url, api_key, downloads, completed_list=[], verbose=True):
     if verbose:
-        download = input(f"Download all {len(downloads)} scene(s)? (Y/N) ")
+        download = input(f"Download {len(downloads)} scene(s)? (Y/N) ")
         if download.lower() not in {'y', 'yes'}:
             return None
         
