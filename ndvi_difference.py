@@ -22,7 +22,7 @@ def create_mosaic(date_latest, date_earliest, df, name):
     granules = df.apply(get_granule_filename, axis=1).tolist()
 
     # build vrts
-    vrt_filename = {name}.vrt
+    vrt_filename = f"{name}.vrt"
     print(f"Building {vrt_filename}...")
     vrt = gdal.BuildVRT(vrt_filename, granules)
 
@@ -78,7 +78,7 @@ def main():
 
     # build a combined vrt with the start and end rasters. this will automatically handle differences in bounds
     print("Building combined VRT from TIF images...")
-    combined_vrt = gdal.BuildVRT("combined.vrt", [start, end], separate=True)
+    combined_vrt = gdal.BuildVRT("combined.vrt", [start_tif, end_tif], separate=True)
     # flush cache
     combined_vrt = None
 
