@@ -1,15 +1,42 @@
 import sys
+import os
 import argparse
 
-import boto3
 import pandas as pd
+import numpy as np
 from pandas.tseries.offsets import DateOffset
 from osgeo import gdal
+
 
 """ Given a row in a DataFrame representing a granule, return the full filename
     of that granule in the s3 filesystem so GDAL can access it. """
 def get_granule_filename(granule):
     return f"/vsis3/{granule['bucket']}/{granule['key']}"
+
+
+""" Given two dates, a Pandas DataFrame, and an output name, generate a mosaic
+    .tif file using granules between the two dates to fill in any gaps. """
+def create_mosaic(date_latest, date_earliest, df, name):
+    df = df[(df['date'] > date_earliest) & 
+            (df['date'] <= date_latest)]
+    granules = df.apply(get_granule_filename, axis=1).tolist()
+
+    # build vrts
+    vrt_filename = {name}.vrt
+    print(f"Building {vrt_filename}...")
+    vrt = gdal.BuildVRT(vrt_filename, granules)
+
+    # convert vrt to tif. this seems to be much faster than using a nested vrt for the difference calculation
+    tif_filename = f"{name}.tif"
+    print(f"Translating {vrt_filename} to {tif_filename}...")
+    tif = gdal.Translate(tif_filename, vrt, format="GTiff")
+
+    # flush cache
+    vrt = tif = None
+
+    os.remove(vrt_filename)
+    return tif_filename
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -33,31 +60,65 @@ def main():
     
     start_d = start - delta
     end_d = end - delta
-    
+    # avoid using redundant data
+    if end_d <= start:
+        end_d = start
+
+    # TODO: verbosity
+    print("Searching for granules...")
     # load database of granules
-    # TODO: turn this into a proper database?
+    # TODO: turn this into a proper database
     # using a csv file as a temp measure
     granules = pd.read_csv("l8-granules.csv")
     granules['date'] = pd.to_datetime(granules['date'])
     granules = granules.sort_values(by="date", ascending=False)
     
-    # search for granules between start_d and start
-    start_df = granules[(granules['date'] >= start_d) &
-                              (granules['date'] <= start)]
-    start_granules = start_df.apply(get_granule_filename, axis=1).tolist()
-    
-    end_df = granules[(granules['date'] >= end_d) &
-                              (granules['date'] <= end)]
-    end_granules = end_df.apply(get_granule_filename, axis=1).tolist()
-    
-    # build vrts
-    start_vrt = gdal.BuildVRT("start.vrt", start_granules)
-    end_vrt = gdal.BuildVRT("end.vrt", end_granules)
-    # build a combined vrt for calculation purposes
-    combined = gdal.BuildVRT("combined.vrt", ["start.vrt", "end.vrt"], separate=True)
-    
-    # flush cache so GDAL writes to disk
-    start_vrt = end_vrt = combined = None
+    start_tif = create_mosaic(start, start_d, granules, "start")
+    end_tif = create_mosaic(end, end_d, granules, "end")
+
+    # build a combined vrt with the start and end rasters. this will automatically handle differences in bounds
+    print("Building combined VRT from TIF images...")
+    combined_vrt = gdal.BuildVRT("combined.vrt", [start, end], separate=True)
+    # flush cache
+    combined_vrt = None
+
+    # get difference between start & end
+    print("Calculating difference raster...")
+    combined = gdal.Open("combined.vrt")
+    start_band = combined.GetRasterBand(1).ReadAsArray().astype(np.float32)
+    end_band = combined.GetRasterBand(2).ReadAsArray().astype(np.float32)
+    gt = combined.GetGeoTransform()
+    proj = combined.GetProjection()
+    xsize = combined.RasterXSize
+    ysize = combined.RasterYSize
+
+    diff = np.subtract(end_band, start_band)
+
+    # save to raster
+    driver = gdal.GetDriverByName("GTiff")
+    driver.Register()
+    # TODO: change output name
+    out_ds = driver.Create("diff.tif",
+                           xsize = xsize,
+                           ysize = ysize,
+                           bands = 1,
+                           eType = gdal.GDT_Float32)
+    out_ds.SetGeoTransform(gt)
+    out_ds.SetProjection(proj)
+    outband = out_ds.GetRasterBand(1)
+    outband.WriteArray(diff)
+    outband.SetNoDataValue(np.nan)
+    outband.FlushCache
+
+    # flush cashe
+    combined = start_band = end_band = gt = proj = driver = out_ds = outband = xsize = ysize = None
+
+    # remove unnecessary files
+    # os.remove(start_tif)
+    # os.remove(end_tif)
+    os.remove("combined.vrt")
+    print("Done.")
+
 
 if __name__ == "__main__":
     main()
