@@ -31,10 +31,10 @@ def authenticate(url, username=None, password=None, verbose=True):
     return api_key
 
 
-""" Search for images matching a certain criteria, and return a list of products that
-    can be downloaded. date_range and cloud_range should be tuples, and boundary should
-    point to a GeoJSON file. Reserving **kwargs to be used in the future if needed. """
-def search(url, api_key, dataset=None, max_results=50, date_range=None, cloud_range=None, boundary=None, verbose=True, **kwargs):
+""" Search for images matching a certain criteria, and return a list of products that can
+    be downloaded. date_range should be a tuple, cloud_max should be an int, and boundary
+    should oint to a GeoJSON file. Reserving **kwargs to be used in the future if needed. """
+def search(url, api_key, dataset=None, max_results=50, date_range=None, cloud_max=None, boundary=None, verbose=True, **kwargs):
     if verbose: print("Fetching scenes...")
     
     # search for scenes that match our criteria
@@ -46,10 +46,10 @@ def search(url, api_key, dataset=None, max_results=50, date_range=None, cloud_ra
             'end': date_range[1]
         }
         
-    if cloud_range:
+    if cloud_max:
         cloud_cover_filter = {
-            'min': cloud_range[0],
-            'max': cloud_range[1],
+            'min': 0,
+            'max': cloud_max,
             'includeUnknown': True
         }
     
@@ -191,8 +191,7 @@ def main():
     parser.add_argument("-date-range", "--dr", metavar=("start", "end"), 
                         dest="date_range", nargs=2, type=str,
                         help="filter scenes by acquisition date (format: yyyy-mm-dd yyyy-mm-dd)")
-    parser.add_argument("-cloud-range", "--cr", metavar=("min", "max"),
-                        dest="cloud_range", nargs=2, type=int,
+    parser.add_argument("-cloud-max", "--cm", dest="cloud_max", type=int,
                         help="filter scenes by cloud cover")
     parser.add_argument("-boundary", "--b", metavar="path/to/geojson",
                         dest="boundary", type=Path,
@@ -220,7 +219,7 @@ def main():
     downloads = search(url, api_key, dataset, 
                        max_results=args.max_results, 
                        date_range=args.date_range, 
-                       cloud_range=args.cloud_range, 
+                       cloud_max=args.cloud_max, 
                        boundary=args.boundary,
                        verbose=args.verbose)
     
