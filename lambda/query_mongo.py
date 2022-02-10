@@ -1,20 +1,24 @@
 import json
 import re
-#from pymongo import MongoClient
+from pymongo import MongoClient
 
 # Below are the strings required to connect to MongoDB.
 # MongoDB is hosted on an EC2 instance. Be aware that the
-# IP address of the EC2 may change if rebooted/stopped/etc.
-ip = 'ec2-34-212-134-82.us-west-2.compute.amazonaws.com'
+# Hostname address of the EC2 may change if rebooted/stopped/etc.
+ip = 'ec2-54-212-157-127.us-west-2.compute.amazonaws.com'
 port = '27017'
 connection_string = f'mongodb://{ip}:{port}/'
 
 
 def lambda_handler(event, context):
 
-    #client = MongoClient(connection_string)
-    #db = client['geospatial']
-    # print(db.geospatial.find_one())
+    try:
+        client = MongoClient(connection_string)
+        db = client['geospatial']
+        print(db.geospatial.find_one())
+    except Exception as e:
+        print(e)
+        return generate_response(500, "Could not connect to MongoDB.")
 
     # gather our queryStringParameters required for MongoDB querying.
     shape = event['queryStringParameters'].get('shape')
@@ -47,7 +51,7 @@ def lambda_handler(event, context):
         return generate_response(400, f'Sorry, shapes provided must be a circle or a rectangle. You provided: {shape}')
 
     # By now, we should have all of the required information to query MongoDB.
-    response = query_mongo(event['queryStringParameters'])
+    response = query_mongo(db, event['queryStringParameters'])
     return response
 
 
@@ -68,7 +72,7 @@ Returns: a JSON object containing documents that are within the provided shape's
 """
 
 
-def query_mongo(query_info):
+def query_mongo(db, query_info):
     shape = query_info.get('shape')
     if shape == 'rectangle':
         print("Building query for a rectangle.")
@@ -77,10 +81,22 @@ def query_mongo(query_info):
         if len(bottom_left) < 2 or len(top_right) < 2:
             return generate_response(400, 'Please input coordinate points correctly with delimiter: `,`')
         query = {"coordinates": {"$within": {
-            "$box": [[bottom_left[0], bottom_left[1]], [top_right[0], top_right[1]]]}}}
+            "$box": [[float(bottom_left[0]), float(bottom_left[1])], [float(top_right[0]), float(top_right[1])]]}}}
         print(f"Constructed query: {query}")
+        query_response = db.geospatial.find(query)
+        
     elif shape == 'circle':
         return generate_response(500, "Sorry, circular queries are unavailable at the moment.")
+    
+    return parse_response(query_response)
+
+
+def parse_response(mongo_cursor):
+    body = []
+    for doc in mongo_cursor:
+        body.append(doc)
+    return generate_response(200, body)
+
 
 
 def generate_response(status_code, body):
@@ -91,26 +107,6 @@ def generate_response(status_code, body):
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Credentials": True, },
         'statusCode': status_code,
-        'body': json.dumps(body)
+        'body': json.dumps(body, default=str)
     }
 
-
-if __name__ == "__main__":
-    event = {
-        "body": "eyJ0ZXN0IjoiYm9keSJ9",
-        "resource": "/{proxy+}",
-        "path": "/path/to/resource",
-        "httpMethod": "POST",
-        "isBase64Encoded": True,
-        "queryStringParameters": {
-            "shape": "rectangle",
-            "bottomLeft": "-70,5",
-            "topRight": "-65,10"
-        },
-        "multiValueQueryStringParameters": {
-            "foo": [
-                "bar"
-            ]
-        },
-    }
-    print(lambda_handler(event, None))
