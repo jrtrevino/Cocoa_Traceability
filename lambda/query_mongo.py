@@ -39,7 +39,7 @@ def lambda_handler(event, context):
         return generate_response(400, 'Please provide a bottom-left and top-right coordinate point pair for rectangular queries.')
 
     elif shape == 'circle' and (not radius or not center):
-        # circule shape provided but no center point and/or radial distance.
+        # circle shape provided but no center point and/or radial distance.
         return generate_response(400, 'Please provide a center coordinate point pair and a radial distance.')
 
     elif shape != 'rectangle' and shape != 'circle':
@@ -54,7 +54,7 @@ def lambda_handler(event, context):
 """
 Queries MongoDB using a geospatial query. This could either be a rectangle or a sphere.
 Notice that a provided coordinate point pair must contain a delimiter symbol ',' to parse the pair.
-    Example: -70%80 would represent the coordinate point (-70 latitude, 80 longitude). Failure for the request
+    Example: -70,80 would represent the coordinate point (-70 latitude, 80 longitude). Failure for the request
     to provide this results in a 400 response.
 
 query_info is a dictionary containing a few of the following keys:
