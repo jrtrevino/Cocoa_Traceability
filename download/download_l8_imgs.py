@@ -8,8 +8,8 @@ from pathlib import Path
 
 import boto3
 
-import util
-from util import get_credentials, send_request, threaded_download, threads, s3_join, upload_to_s3
+import download_utils
+from download_utils import get_credentials, send_request, threaded_download, threads, s3_join, upload_to_s3
 
 
 # --------------------------------------------------------------------------- #
@@ -19,23 +19,23 @@ from util import get_credentials, send_request, threaded_download, threads, s3_j
 
 
 """ Log in to the API and return the API key to use with future requests. """
-def authenticate(url, username=None, password=None, verbose=True):
+def authenticate(url, username=None, password=None):
     # To access the API, first register for USGS Eros credentials here: https://ers.cr.usgs.gov/register
     # Next, log in and request access to the M2M API here: https://ers.cr.usgs.gov/profile/access
     # It might take a few days to be granted access.
     if not username or not password:
         username, password = get_credentials("USGS Eros Username: ")
     payload = {'username': username, 'password': password}
-    if verbose: print("Logging in...")
-    api_key = send_request(url + "login", payload, verbose=verbose)
+    print("Logging in...")
+    api_key = send_request(url + "login", payload)
     return api_key
 
 
 """ Search for images matching a certain criteria, and return a list of products that can
     be downloaded. date_range should be a tuple, cloud_max should be an int, and boundary
     should oint to a GeoJSON file. Reserving **kwargs to be used in the future if needed. """
-def search(url, api_key, dataset=None, max_results=50, date_range=None, cloud_max=None, boundary=None, verbose=True, **kwargs):
-    if verbose: print("Fetching scenes...")
+def search(url, api_key, dataset=None, max_results=50, date_range=None, cloud_max=None, boundary=None, **kwargs):
+    print("Fetching scenes...")
     
     # search for scenes that match our criteria
     acquisition_filter = cloud_cover_filter = ingest_filter = metadata_filter = seasonal_filter = spatial_filter = None
@@ -79,7 +79,7 @@ def search(url, api_key, dataset=None, max_results=50, date_range=None, cloud_ma
         'sceneFilter': scene_filter
     }
     
-    matching_scenes = send_request(url + "scene-search", payload, api_key, verbose=verbose)['results']
+    matching_scenes = send_request(url + "scene-search", payload, api_key)['results']
     entityIds = []
     for scene in matching_scenes:
         entityIds.append(scene['entityId'])
@@ -92,7 +92,7 @@ def search(url, api_key, dataset=None, max_results=50, date_range=None, cloud_ma
         'datasetName': dataset
     }
     
-    num_scenes = send_request(url + "scene-list-add", payload, api_key, verbose=verbose)   
+    num_scenes = send_request(url + "scene-list-add", payload, api_key)   
     
     # get download options
     payload = {
@@ -100,7 +100,7 @@ def search(url, api_key, dataset=None, max_results=50, date_range=None, cloud_ma
         'datasetName': dataset
     }
     
-    products = send_request(url + "download-options", payload, api_key, verbose=verbose)
+    products = send_request(url + "download-options", payload, api_key)
     downloads = []
     for product in products:
         if product['bulkAvailable']:         
@@ -111,7 +111,7 @@ def search(url, api_key, dataset=None, max_results=50, date_range=None, cloud_ma
         'listId': list_id
     }
     
-    send_request(url + "scene-list-remove", payload, api_key, verbose=verbose) 
+    send_request(url + "scene-list-remove", payload, api_key) 
     
     return downloads
 
@@ -141,45 +141,48 @@ def format_geojson(geojson):
         raise JSONFormatError(f"Error parsing JSON: missing {e} field")
         
 
-def download(url, api_key, downloads, completed_list=[], verbose=True):
-    if verbose:
-        download = input(f"Download {len(downloads)} scene(s)? (Y/N) ")
-        if download.lower() not in {'y', 'yes'}:
-            return None
+def download(url, api_key, downloads, completed_list=[]):
+    if len(downloads) == 0:
+        print("No tiles matching the criteria were found.")
+        return None
+
+    download = input(f"Download {len(downloads)} scene(s)? (Y/N) ")
+    if download.lower() not in {'y', 'yes'}:
+        return None
         
-    if verbose: print("Requesting scenes for download...")
+    print("Requesting scenes for download...")
     label = datetime.now().strftime("%Y%m%d_%H%M%S")
     payload = {
         'downloads': downloads,
         'label': label
     }
     
-    results = send_request(url + "download-request", payload, api_key, verbose=verbose)
+    results = send_request(url + "download-request", payload, api_key)
     
     for result in results['availableDownloads']:       
-        threaded_download(result['url'], threads, completed_list, verbose=verbose)
+        threaded_download(result['url'], threads, completed_list)
     
     # if downloads not immediately available, poll until they become available
     preparing_dl_count = len(results['preparingDownloads'])
     preparing_dl_ids = []
     if preparing_dl_count > 0:
-        if verbose: print("Waiting for all downloads to become available...")
+        print("Waiting for all downloads to become available...")
         for result in results['preparingDownloads']:  
             preparing_dl_ids.append(result['downloadId'])
         payload = {"label" : label}   
         while len(preparing_dl_ids) > 0: 
             time.sleep(30)
-            results = send_request(url + "download-retrieve", payload, api_key, False, verbose=verbose)
+            results = send_request(url + "download-retrieve", payload, api_key, False)
             if results != False:
                 for result in results['available']:                            
                     if result['downloadId'] in preparing_dl_ids:
                         preparing_dl_ids.remove(result['downloadId'])
-                        threaded_download(result['url'], threads, completed_list, verbose=verbose)
+                        threaded_download(result['url'], threads, completed_list)
                         
                 for result in results['requested']:   
                     if result['downloadId'] in preparing_dl_ids:
                         preparing_dl_ids.remove(result['downloadId'])
-                        threaded_download(result['url'], threads, completed_list, verbose=verbose)
+                        threaded_download(result['url'], threads, completed_list)
                         
     return completed_list
 
@@ -204,27 +207,24 @@ def main():
     parser.add_argument("-maxthreads", "--mt", metavar="int",
                         dest="max_threads", type=int, default=5,
                         help="max number of threads to use to download")
-    parser.add_argument("-quiet", "--q", dest="verbose", action="store_false",
-                        help="suppress printing to the console")
     args = parser.parse_args()
     
-    util.sema = threading.Semaphore(value=args.max_threads)
+    download_utils.sema = threading.Semaphore(value=args.max_threads)
     
     url = "https://m2m.cr.usgs.gov/api/api/json/stable/"
     dataset = "landsat_ot_c2_l2"
     dataset_name = "landsat"
     
-    api_key = authenticate(url, verbose=args.verbose)
+    api_key = authenticate(url)
     
     downloads = search(url, api_key, dataset, 
                        max_results=args.max_results, 
                        date_range=args.date_range, 
                        cloud_max=args.cloud_max, 
-                       boundary=args.boundary,
-                       verbose=args.verbose)
+                       boundary=args.boundary)
     
     completed_list = []
-    download(url, api_key, downloads, completed_list, verbose=args.verbose)
+    download(url, api_key, downloads, completed_list)
     
     # wait until all downloads have finished
     for thread in threads:
@@ -261,9 +261,9 @@ def main():
             m = l8_name_pattern.match(file)
             prefix = s3_join(dataset_name, m.group('path'), m.group('row'), m.group('acq_year'),
                               m.group('acq_month'))
-            upload_to_s3(file, args.dst, prefix, s3, delete=True, verbose=args.verbose)
+            upload_to_s3(file, args.dst, prefix, s3, delete=True)
             
-    if args.verbose: print("Done.")
+    print("Done.")
     
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ def get_credentials(prompt="Username: "):
 
 
 """ Send an HTTP POST request. """
-def send_request(url, data, apiKey=None, exitIfNoResponse=True, verbose=True):  
+def send_request(url, data, apiKey=None, exitIfNoResponse=True):  
     json_data = json.dumps(data)
     
     if apiKey == None:
@@ -35,29 +35,29 @@ def send_request(url, data, apiKey=None, exitIfNoResponse=True, verbose=True):
     try:
       httpStatusCode = response.status_code 
       if response == None:
-          if verbose: print("Error: No output from service")
+          print("Error: No output from service")
           if exitIfNoResponse: sys.exit()
           else: return False
       output = json.loads(response.text)
       if output['errorCode'] != None:
-          if verbose: print(f"Error: {output['errorCode']} - {output['errorMessage']}")
+          print(f"Error: {output['errorCode']} - {output['errorMessage']}")
           if exitIfNoResponse: sys.exit()
           else: return False
       if  httpStatusCode == 404:
-          if verbose: print("Error: 404 Not Found")
+          print("Error: 404 Not Found")
           if exitIfNoResponse: sys.exit()
           else: return False
       elif httpStatusCode == 401: 
-          if verbose: print("Error: 401 Unauthorized")
+          print("Error: 401 Unauthorized")
           if exitIfNoResponse: sys.exit()
           else: return False
       elif httpStatusCode == 400:
-          if verbose: print("Error: ", httpStatusCode)
+          print("Error: ", httpStatusCode)
           if exitIfNoResponse: sys.exit()
           else: return False
     except Exception as e: 
           response.close()
-          if verbose: print(f"Error: {e}")
+          print(f"Error: {e}")
           if exitIfNoResponse: sys.exit()
           else: return False
     response.close()
@@ -66,40 +66,40 @@ def send_request(url, data, apiKey=None, exitIfNoResponse=True, verbose=True):
 
 
 """ Download a file from the specified URL. Will append to completed_list if provided. """
-def download_file(url, completed_list = [], max_tries=5, verbose=True):
+def download_file(url, completed_list = [], max_tries=5):
     sema.acquire()
     try:        
         response = requests.get(url, stream=True)
         disposition = response.headers['content-disposition']
         filename = re.findall("filename=(.+)", disposition)[0].strip("\"")
-        if verbose: print(f"Downloading {filename}...")
+        print(f"Downloading {filename}...")
         if path != "" and path[-1] != "/":
             filename = "/" + filename
         open(path+filename, 'wb').write(response.content)
-        if verbose: print(f"Downloaded {filename}.")
+        print(f"Downloaded {filename}.")
         completed_list.append(filename)
         sema.release()
     except Exception as e:
         sema.release()
-        if verbose: print(f"Failed to download from {url}: {e}")
+        print(f"Failed to download from {url}: {e}")
         if max_tries > 0:
-            if verbose: print("Attempting to redownload...")
-            threaded_download(url, threads, completed_list, max_tries - 1, verbose=verbose)
+            print("Attempting to redownload...")
+            threaded_download(url, threads, completed_list, max_tries - 1)
         else:
-            if verbose: print("Max number of tries exceeded. Aborting...")
+            print("Max number of tries exceeded. Aborting...")
     
 """ Download a file from the specified URL in a new thread. Will append to completed_list if provided. """    
-def threaded_download(url, threads, completed_list=[], max_tries=5, verbose=True):
-    thread = threading.Thread(target=download_file, args=(url, completed_list, max_tries, verbose))
+def threaded_download(url, threads, completed_list=[], max_tries=5):
+    thread = threading.Thread(target=download_file, args=(url, completed_list, max_tries))
     threads.append(thread)
     thread.start()
 
 
 """ Given the name of a file on local storage, upload it to an s3 bucket then delete the local copy. """
-def upload_to_s3(filename, bucket, prefix, s3, delete=False, verbose=True):
+def upload_to_s3(filename, bucket, prefix, s3, delete=False):
     try:
         key = s3_join(prefix, filename)
-        if verbose: print("Uploading " + filename + " to s3...")
+        print("Uploading " + filename + " to s3...")
         s3.meta.client.upload_file(Filename=filename, Bucket=bucket, Key=key)
         if delete:
             os.remove(filename)
