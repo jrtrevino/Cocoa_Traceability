@@ -3,6 +3,7 @@ import json
 import re
 import os
 from pathlib import Path
+from sys import path_importer_cache
 
 import boto3
 from sentinelhub import SHConfig, WebFeatureService, DataCollection, Geometry, AwsTileRequest, AwsTile
@@ -10,6 +11,10 @@ from sentinelhub import SHConfig, WebFeatureService, DataCollection, Geometry, A
 
 DATA_COLLECTION = DataCollection.SENTINEL2_L2A
 
+
+""" Authenticate the user based on the credentials in their config.json file.
+    See https://sentinelhub-py.readthedocs.io/en/latest/configure.html to configure,
+    or https://www.sentinel-hub.com/ to register an account. """
 def authenticate():
     config = SHConfig()
 
@@ -43,12 +48,19 @@ def search(config, dataset=None,  date_range=None, cloud_max=1, boundary=None, *
         config=config
     )
     
+    # return get_tiles() if using local download
     # return wfs_iterator.get_tiles()
-    # return [tile['properties']['id'] for tile in list(wfs_iterator)]
-    return [tile['properties']['path'] for tile in list(wfs_iterator)]
+    # return tuple with id and path to tile in SentinelHub S3 bucket
+    return [(tile['properties']['id'], tile['properties']['path']) for tile in list(wfs_iterator)]
 
 
+""" Given a list of tiles in the Sentinelhub S2 bucket and a list of files to copy for
+    each tile, copy those files into dst_bucket. """
 def copy_to_s3(tile_list, dst_bucket, files):
+    if len(tile_list) == 0:
+        print("No tiles matching the criteria were found.")
+        return None
+
     download = input(f"Copy {len(tile_list)} scene(s) to s3://{dst_bucket}? (Y/N) ")
     if download.lower() not in {'y', 'yes'}:
         return None
@@ -69,20 +81,22 @@ def copy_to_s3(tile_list, dst_bucket, files):
         (?:/)
         (?P<year>\d{4})                 # match the year
         (?:/)
-        (?P<month>\d{1,2})                # match the month
+        (?P<month>\d{1,2})              # match the month
         (?:/)
-        (?P<day>\d{1,2})                  # match the day
+        (?P<day>\d{1,2})                # match the day
         (?:/\d+)
         """, re.VERBOSE)
     
     for tile in tile_list:
-        m = s2_name_pattern.match(tile)
+        id = tile[0] # use tile id when naming output files
+        path = tile[1]
+        m = s2_name_pattern.match(path)
         # pad month and day with a zero if necessary
         month = pad_zeroes(m.group('month'))
         day = pad_zeroes(m.group('day'))
         for file in files:
             # split bucket name from key
-            copy_key = f"{tile[21:]}/{file}"
+            copy_key = f"{path[21:]}/{file}"
             copy_source = {
                 'Bucket': m.group('bucket'),
                 'Key': copy_key
@@ -90,7 +104,7 @@ def copy_to_s3(tile_list, dst_bucket, files):
             # construct the appropriate key, removing the /tiles/ prefix and stripping any folders from the
             # individual files (ex. R10m/B04.jp2 -> B04.jp2)
             dst_key = (f"sentinel-2/{m.group('utm')}/{m.group('lat')}/{m.group('square')}/"
-                        f"{m.group('year')}/{month}/{day}/{os.path.basename(file)}")
+                        f"{m.group('year')}/{month}/{day}/{id}_{os.path.basename(file)}")
             print(f"Copying to s3://{dst_bucket}/{dst_key}...")
             s3.meta.client.copy(copy_source, dst_bucket, dst_key, ExtraArgs={'RequestPayer': 'requester'})
 
@@ -102,31 +116,33 @@ def pad_zeroes(string):
         string = f"0{string}"
     return string
 
-# def download(downloads, bands=['R10m/B04', 'R10m/B08'], metafiles=['tileInfo', 'qi/MSK_CLOUDS_B00'], data_folder="."):
-#     # by default, select R/NIR bands, tile info metadata file, and cloud mask
 
-#     download = input(f"Download {len(downloads)} scene(s)? (Y/N) ")
-#     if download.lower() not in {'y', 'yes'}:
-#         return None
+# download tiles locally
+def download(downloads, bands=['R10m/B04', 'R10m/B08'], metafiles=['tileInfo', 'qi/MSK_CLOUDS_B00'], data_folder="."):
+    # by default, select R/NIR bands, tile info metadata file, and cloud mask
 
-#     downloaded = []
-#     for tile in downloads:
-#         print(f"Downloading {tile}...")
-#         request = AwsTileRequest(
-#             tile = tile[0],
-#             time = tile[1],
-#             aws_index = tile[2],
-#             bands = bands,
-#             metafiles = metafiles,
-#             data_folder = data_folder,
-#             data_collection = DATA_COLLECTION
-#         )
+    download = input(f"Download {len(downloads)} scene(s)? (Y/N) ")
+    if download.lower() not in {'y', 'yes'}:
+        return None
 
-#         # trigger download
-#         downloaded.append(request.save_data())
-#         # downloaded.append(request.get_data(save_data=True))
+    downloaded = []
+    for tile in downloads:
+        print(f"Downloading {tile}...")
+        request = AwsTileRequest(
+            tile = tile[0],
+            time = tile[1],
+            aws_index = tile[2],
+            bands = bands,
+            metafiles = metafiles,
+            data_folder = data_folder,
+            data_collection = DATA_COLLECTION
+        )
+
+        # trigger download
+        downloaded.append(request.save_data())
+        # downloaded.append(request.get_data(save_data=True))
     
-#     return downloaded
+    return downloaded
 
 
 def main():
@@ -148,6 +164,8 @@ def main():
     args = parser.parse_args()
 
 
+    # credentials are needed to use SentinelHub API for search functionality.
+    # if we can perform searching ourselves, credentials would not be necessary
     config = authenticate()
 
     tile_list = search(config, date_range=args.date_range, boundary=args.boundary)
@@ -157,7 +175,7 @@ def main():
 
     print("Done.")
 
-    # downloaded = download(downloads, data_folder = "s3://raw-granules/sentinel/")
+    # downloaded = download(downloads)
     # print(downloaded)
 
 if __name__ == "__main__":
