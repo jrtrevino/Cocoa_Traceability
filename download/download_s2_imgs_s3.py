@@ -46,7 +46,6 @@ def download(destination_bucket: str, start_date: datetime.datetime, end_date: d
         date_str = f"{temp_date.year}/{temp_date.month}/{temp_date.day}/0/"  # 0 indicates it is the first grouping of images (never saw more than one)
         for tile in tiles:
             for file in files:
-                # tiles/18/N/WM/2021/10/10/0/R10m/B04.jp2
                 target_prefix = f'tiles/{tile}{date_str}{file}'
                 destination_prefix = f"sentinel-2/{tile}{date_str}{os.path.basename(file)}"
                 if checkExistence(s3_client, target_bucket, target_prefix):
