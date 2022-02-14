@@ -76,8 +76,6 @@ def main():
 #                         help="suppress printing to the console")
     args = parser.parse_args()
     
-    destination_bucket = 'raw-granules'
-    
     start_date = parse_date(args.date_range[0])
     end_date = parse_date(args.date_range[1])
     
