@@ -11,22 +11,23 @@ connection_string = f'mongodb://{ip}:{port}/'
 
 
 def lambda_handler(event, context):
+    print(f"Printing event: {event}")
+     # gather our queryStringParameters required for MongoDB querying.
+    shape = event.get('queryStringParameters') and  event['queryStringParameters'].get('shape')
+    center =  event.get('queryStringParameters') and event['queryStringParameters'].get('center')
+    radius =  event.get('queryStringParameters') and event['queryStringParameters'].get('radius')
+    bottom_left =  event.get('queryStringParameters') and event['queryStringParameters'].get('bottomLeft')
+    top_right =  event.get('queryStringParameters') and event['queryStringParameters'].get('topRight')
 
     try:
         client = MongoClient(connection_string)
-        db = client['geospatial']
-        print(db.geospatial.find_one())
+        db = client['geospatial'] if shape else client['farms']
+        # print(db.geospatial.find_one())
     except Exception as e:
         print(e)
         return generate_response(500, "Could not connect to MongoDB.")
 
-    # gather our queryStringParameters required for MongoDB querying.
-    shape = event['queryStringParameters'].get('shape')
-    center = event['queryStringParameters'].get('center')
-    radius = event['queryStringParameters'].get('radius')
-    bottom_left = event['queryStringParameters'].get('bottomLeft')
-    top_right = event['queryStringParameters'].get('topRight')
-
+   
     # query MongoDB according to shape and coordinate points.
     # rectangle queries require two point pairs: bottom left and top right.
     # These two pairs designate the corners of the rectangle.
@@ -97,15 +98,14 @@ def parse_response(mongo_cursor):
         body.append(doc)
     return generate_response(200, body)
 
-
-
 def generate_response(status_code, body):
     return {
         "isBase64Encoded": False,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Credentials": True, },
+        'headers': {
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'OPTIONS,POST,GET'
+        },
         'statusCode': status_code,
         'body': json.dumps(body, default=str)
     }
