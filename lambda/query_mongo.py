@@ -12,12 +12,17 @@ connection_string = f'mongodb://{ip}:{port}/'
 
 def lambda_handler(event, context):
     print(f"Printing event: {event}")
-     # gather our queryStringParameters required for MongoDB querying.
-    shape = event.get('queryStringParameters') and  event['queryStringParameters'].get('shape')
-    center =  event.get('queryStringParameters') and event['queryStringParameters'].get('center')
-    radius =  event.get('queryStringParameters') and event['queryStringParameters'].get('radius')
-    bottom_left =  event.get('queryStringParameters') and event['queryStringParameters'].get('bottomLeft')
-    top_right =  event.get('queryStringParameters') and event['queryStringParameters'].get('topRight')
+    # gather our queryStringParameters required for MongoDB querying.
+    shape = event.get(
+        'queryStringParameters') and event['queryStringParameters'].get('shape')
+    center = event.get(
+        'queryStringParameters') and event['queryStringParameters'].get('center')
+    radius = event.get(
+        'queryStringParameters') and event['queryStringParameters'].get('radius')
+    bottom_left = event.get(
+        'queryStringParameters') and event['queryStringParameters'].get('bottomLeft')
+    top_right = event.get(
+        'queryStringParameters') and event['queryStringParameters'].get('topRight')
 
     try:
         client = MongoClient(connection_string)
@@ -27,7 +32,6 @@ def lambda_handler(event, context):
         print(e)
         return generate_response(500, "Could not connect to MongoDB.")
 
-   
     # query MongoDB according to shape and coordinate points.
     # rectangle queries require two point pairs: bottom left and top right.
     # These two pairs designate the corners of the rectangle.
@@ -35,9 +39,9 @@ def lambda_handler(event, context):
     # All coordinate pairs are in the format (lat,long)
 
     if not shape:
-        # shape was not provided, return an error.
-        # we can change default behavior later.
-        return generate_response(400, 'Please provide a shape for geospatial queries.')
+        # We can default to return farms if a center coordinate is provided.
+        if not center:
+            return generate_response(400, 'Please provide a shape for geospatial queries, or a center coordinate for farm querying.')
 
     elif shape == 'rectangle' and (not bottom_left or not top_right):
         # rectangle shape was provided, but required coordinate points were not.
@@ -75,6 +79,7 @@ Returns: a JSON object containing documents that are within the provided shape's
 
 def query_mongo(db, query_info):
     shape = query_info.get('shape')
+
     if shape == 'rectangle':
         print("Building query for a rectangle.")
         bottom_left = query_info.get('bottomLeft').split(',')
@@ -85,10 +90,21 @@ def query_mongo(db, query_info):
             "$box": [[float(bottom_left[0]), float(bottom_left[1])], [float(top_right[0]), float(top_right[1])]]}}}
         print(f"Constructed query: {query}")
         query_response = db.geospatial.find(query)
-        
+
     elif shape == 'circle':
         return generate_response(500, "Sorry, circular queries are unavailable at the moment.")
-    
+    elif not shape:
+        # query point for farm
+        coordinate = query_info.get('center', "").split(',')
+        if len(coordinate) < 2:
+            return generate_response(400, 'Please input coordinate points correctly with delimiter: `,`')
+        print(f"Querying for farms near this point: {coordinate}")
+        # construct query
+        query = {"loc": {"$geoIntersects": {
+            "$geometry": {
+                "type": "Point",
+                "coordinates": [float(coordinate[0]), float(coordinate[1])]}}}}
+        query_response = db.farms.find(query)
     return parse_response(query_response)
 
 
@@ -97,6 +113,7 @@ def parse_response(mongo_cursor):
     for doc in mongo_cursor:
         body.append(doc)
     return generate_response(200, body)
+
 
 def generate_response(status_code, body):
     return {
@@ -110,3 +127,21 @@ def generate_response(status_code, body):
         'body': json.dumps(body, default=str)
     }
 
+
+if __name__ == "__main__":
+    event = {
+        "body": "eyJ0ZXN0IjoiYm9keSJ9",
+        "resource": "/{proxy+}",
+        "path": "/path/to/resource",
+        "httpMethod": "POST",
+        "isBase64Encoded": True,
+        "queryStringParameters": {
+            "center": "00"
+        },
+        "multiValueQueryStringParameters": {
+            "foo": [
+                "bar"
+            ]
+        },
+    }
+    print(lambda_handler(event, None))
